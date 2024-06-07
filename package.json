@@ -2,9 +2,10 @@
   "name": "xlsx-template-browser",
   "version": "0.1.8",
   "description": "On-the-fly generation of .xlsx (Excel) files directly within the browser using templates constructed in Excel.",
-  "main": "./lib/index",
+  "main": "./dist/index",
+  "types": "dist/*.d.ts",
   "files": [
-    "lib"
+    "dist"
   ],
   "author": {
     "name": "Kyrylo Zakharov"
@@ -36,5 +37,9 @@
     "office",
     "spreadsheet",
     "property accessor"
-  ]
+  ],
+  "devDependencies": {
+    "@types/node": "^20.14.2",
+    "typescript": "^5.4.5"
+  }
 }

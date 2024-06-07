@@ -1,42 +1,30 @@
-/**
- * Converts a value to a string.
- * @param {*} value - The value to be converted.
- * @returns {string} - The converted string representation of the value.
- */
-export const valueToString = (value) => {
+export function valueToString(value: string | string[] | object): string {
   if (!value) return ''
   if (Array.isArray(value)) return value.map(valueToString).toString()
   if (typeof value === 'object') value = JSON.stringify(value)
-  return escapeXml(value.toString())
+  return value.toString()
 }
 
-/**
- * Converts dates to Excel serial index.
- * @param {Date} value - The date to be converted.
- * @returns {number} - The Excel serial index representing the date.
- */
-const dateToExcel = (value) => {
+function dateToExcel(value: Date): number {
   let date = new Date(value)
   return 25569 + ((date.getTime() - (date.getTimezoneOffset() * 60 * 1000)) / (1000 * 60 * 60 * 24))
 }
 
 /**
  * Guesses the Excel data type for the given JavaScript primitive value.
- * @param {*} value - The JavaScript primitive value to be converted.
- * @returns {Object|undefined} - An object with 'cellType' and 'value' properties representing the Excel data type,
- *                               or undefined if the data type is not recognized.
+                        or undefined if the data type is not recognized.
  */
-export const guessDataType = (value) => {
+export function guessDataType(value: Object) {
   if (typeof value === 'undefined') return { cellType: 's', value: '' }
   if (typeof value === 'number') {
     if (isFinite(value)) return { cellType: 'n', value }
     return undefined
   }
   if (value instanceof Date) {
-    if (isNaN(value)) return undefined
+    if (isNaN(value.getDate())) return undefined
     return { cellType: 'n', value: dateToExcel(value) }
   }
-  if (typeof value === 'boolean') return { cellType: 'b', value: value + 0 }
+  if (typeof value === 'boolean') return { cellType: 'b', value: value ? 1 : 0 }
   return { cellType: 's', value: valueToString(value) }
 }
 
@@ -46,8 +34,8 @@ export const guessDataType = (value) => {
  * @param {Element} template - (Optional) An existing node with cell to clone for the shared string.
  * @returns {Element} - The newly created or cloned shared string element.
  */
-export const createSharedString = (text, template) => {
-  const si = template ? template.cloneNode() : document.createElement('si')
+export function createSharedString(text: string, template?: Element): Element {
+  const si = template ? template.cloneNode() as Element : document.createElement('si')
   let t = document.createElement('t')
   t.textContent = text
   si.appendChild(t)
@@ -94,10 +82,8 @@ export const createCell = ({ value, row, column, template, cellType }) => {
 
 /**
  * Converts a numeric index to an Excel column name.
- * @param {number} index - The numeric index to be converted.
- * @returns {string} - The Excel column name corresponding to the index.
  */
-const getExcelColumnName = (index) => {
+const getExcelColumnName = (index: number) => {
   let result = ''
   while (index > 0) {
     const remainder = (index - 1) % 26
@@ -139,7 +125,7 @@ const unsafeChars = {
   '"': '&quot;'
 }
 
-export const escapeXml = (unsafe) => {
-  return unsafe.replace(/[<>&'"]/g, (c) =>  { return unsafeChars[c] })
+export const escapeXml = (unsafe: string) => {
+  return unsafe.replace(/[<>&'"]/g, (c) => { return unsafeChars[c] })
 }
 

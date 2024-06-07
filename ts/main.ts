@@ -1,6 +1,5 @@
 // Refer to Excel OpenXML format:
 // https://learn.microsoft.com/en-us/dotnet/api/documentformat.openxml.spreadsheet.cell?view=openxml-2.8.1
-
 // Import JSZip library for working with ZIP files
 import JSZip from 'jszip'
 import {
@@ -11,80 +10,73 @@ import {
   valueToString
 } from './excelHelpers'
 
-import {
-  getByNotation
-} from './helpers'
+import { getByNotation } from './helpers'
 
-// Regular expression for parsing a property accessor enclosed in ${}
-const accessorRegex = /(?<=^\$\{)(?<table>table:)?(?<accessor>[^}]+)(?=}$)/
+async function replaceInTemplate(template: ArrayBuffer, data: object) {
+  if (!data) throw new Error(`xlsx-template-browser - replaceInTemplate - The data passed is empty`)
+  if (!template) throw new Error(`xlsx-template-browser - replaceInTemplate - The template passed is empty`)
 
-// Global regular expression for extracting all property accessors enclosed in ${}
-const globalAccessorRegex = /\$\{[^}]+}/g
-
-const replace = async (template, data) => {
-  if (!template || !data) return template
+  // Regular expression for parsing a property accessor enclosed in ${}
+  const accessorRegex = /(?<=^\$\{)(?<table>table:)?(?<accessor>[^}]+)(?=}$)/
+  // Global regular expression for extracting all property accessors enclosed in ${}
+  const globalAccessorRegex = /\$\{[^}]*}/g
 
   /* INITIALIZATION */
-
-  // Create a new DOMParser instance for parsing XML. Refer to https://developer.mozilla.org/en-US/docs/Web/API/DOMParser
   const parser = new DOMParser()
   const serializer = new XMLSerializer()
-  // Create a new instance of JSZip for ZIP file manipulation
+
   const new_zip = new JSZip()
-  // Load xlsx (zipped file)
-  let res = await new_zip.loadAsync(template)
+  const template_zip = await new_zip.loadAsync(template)
 
   /* PROCESSING OF THE SHARED STRINGS */
+  const sharedStringsFile = template_zip.file('xl/sharedStrings.xml')
+  if (!sharedStringsFile) throw new Error(`xlsx-template-browser - replaceInTemplate - Unable to get file 'xl/sharedStrings.xml' from the provided template`)
+  const xmlText = await sharedStringsFile.async('string')
 
-  // Read all shared text values
-  let xmlText = await res.file('xl/sharedStrings.xml').async('string')
-  // Get the xml with shared shared strings
   const xml = parser.parseFromString(xmlText, 'application/xml')
-  // Get the header of shared strings
-  const sst = xml.querySelector('sst')
-  // Array with new values
-  const valuesToReplace = []
-  // New list of shared string values
-  let newSharedStrings = []
+  const sharedStringTable = xml.querySelector('sst')
+  if (!sharedStringTable) throw new Error(`xlsx-template-browser - replaceInTemplate - sharedStrings.xml do not contain a <sst> delimiter`)
+
+  const valuesToReplace: any[] = []
+  let newSharedStrings: Element[] = []
 
   // We need to replace only text values with the new ones, therefore we process shared strings first
   // Get all string items
-  xml.querySelectorAll('si').forEach((si, i) => {
+  xml.querySelectorAll('si').forEach((stringItem, i) => {
     // Get all rich format tags
-    const r = si.querySelector('r')
+    const r = stringItem.querySelector('r')
     if (r) {
-      const xmlString = si.innerHTML
+      const xmlString = stringItem.innerHTML
       const newString = xmlString.replace(globalAccessorRegex, s => valueToString(getByNotation(data, s.replace(/\$\{|}/g, ''))))
-      si.innerHTML = newString
-      newSharedStrings.push(si)
+      stringItem.innerHTML = newString
+      newSharedStrings.push(stringItem)
       valuesToReplace[i] = { value: newSharedStrings.length - 1, cellType: 's' }
-      return false
+      return
     }
+
     // Get all text tags
-    const t = si.querySelector('t')
-    if (!t) return false
-    // Get text value
-    const textValue = t.textContent
-    // Get all accessors
+    const t = stringItem.querySelector('t')
+    if (!t) return
+    const textValue = t.textContent ? t.textContent : ""
     let match = textValue.match(accessorRegex)
     // If the cell does not contain only one placeholder, check for multiple ones
     if (!match) {
       // Check if the text contains any accessors at all
       let newText = textValue.replace(globalAccessorRegex, s => valueToString(getByNotation(data, s.replace(/\$\{|}/g, ''))))
-      newSharedStrings.push(createSharedString(newText, si))
+      newSharedStrings.push(createSharedString(newText, stringItem))
       valuesToReplace[i] = { value: newSharedStrings.length - 1, cellType: 's' }
-      return false
+      return
     }
     // Process a value with an accessor only
-    let { accessor, table } = match.groups
+    let { accessor, table } = match.groups as { accessor: string, table: string }
     // If we have table values, we need to process them in a separate way
     const isTable = typeof table === 'string'
     let value = getByNotation(data, accessor)
-    if (typeof value === 'undefined') return false
     // Save tables for further processing
     if (isTable) {
-      valuesToReplace[i] = { isTable, value: value.map(guessDataType) }
-      return false
+      if (isTable && Array.isArray(value))
+        valuesToReplace[i] = { isTable, value: value.map(guessDataType) }
+      return
     }
     if (Array.isArray(value)) {
       valuesToReplace[i] = value.map(guessDataType)
@@ -96,41 +88,40 @@ const replace = async (template, data) => {
   /* PROCESSING OF WORKSHEETS */
 
   // To prevent string duplication, store unique strings (they will be added to shared strings)
-  const newStrings = []
+  const newStrings: string[] = []
 
   // Adds a string to the collection, avoiding duplication, and returns its index.
-  const addString = (value) => {
+  function addString(value: string): number {
     let stringIndex = newStrings.indexOf(value)
     if (stringIndex === -1) {
       newStrings.push(value)
       stringIndex = newStrings.length - 1
     }
-    value = stringIndex + newSharedStrings.length
-    return value
+    return stringIndex + newSharedStrings.length
   }
 
   // Get all worksheets
-  const worksheets = Object.keys(res.files).filter(el => /xl\/worksheets\/[^/]+$/.test(el))
+  const worksheets = Object.keys(template_zip.files).filter(el => /xl\/worksheets\/[^/]+$/.test(el))
   for (let worksheet of worksheets) {
-    // Unzip the file
-    let xmlText = await res.file(worksheet).async('string')
-    // Parse file to DOM
+    const file = template_zip.file(worksheet)
+    if (!file) throw new Error(`xlsx-template-browser - replaceInTemplate - Unable to open the 'xl/worksheet/' file`)
+    let xmlText = await file.async('string')
     let xml = parser.parseFromString(xmlText, 'application/xml')
-    // Process rows
     let rows = xml.querySelectorAll('sheetData row')
-    // Array with the list of the new rows
-    const newRows = []
+    const newRows: Element[] = []
     // Process cells in rows
     let rowOffset = 0
     for (let row of rows) {
       // Since some rows can be skipped, we want to get an actual row number from the template
-      let currentRow = parseInt(row.getAttribute('r'))
+      const rowAttribute = row.getAttribute('r')
+      if (rowAttribute === null) throw new Error(`xlsx-template-browser - replaceInTemplate - The template sheets have invalid xml: rows do not posses 'r' attribute`)
+      let currentRow = parseInt(rowAttribute)
       // List of new cells
-      let newCells = []
+      let newCells: any[] = []
       // If we have an array of values to extend the list of cells, we should keep an offset to move static cells
       let cellOffset = 0
       // Process each cell
-      let cells = row.querySelectorAll('c').forEach((c) => {
+      row.querySelectorAll('c').forEach((c) => {
         // Current cell index (note that Excel has 1-based index)
         let index = getExcelColumnIndex(c.getAttribute('r'))
         let newIndex = index + cellOffset
@@ -142,16 +133,16 @@ const replace = async (template, data) => {
           const value = c
           const cellType = 'f'
           newCells[newIndex] = Object.assign({}, { value, cellType }, { template: c })
-          return false
+          return
         }
         // Check if the cell contains string
         let isString = c.getAttribute('t')
         if (!isString || isString !== 's') {
           newCells[newIndex] = Object.assign({}, { template: c })
-          return false
+          return
         }
         // Get the new value to replace
-        let newValue = valuesToReplace[v.textContent] || {}
+        let newValue = v instanceof Element && v.textContent !== null ? valuesToReplace[v.textContent] : {}
         if (!Array.isArray(newValue)) {
           let { value, cellType, isTable } = newValue
           // If the new value is an array from the table, then return an array of values
@@ -189,8 +180,8 @@ const replace = async (template, data) => {
           if (!el) return undefined
           return createCell(Object.assign({}, el, { row: rowIndex, column: i }))
         }).filter(Boolean)
-        const newRow = row.cloneNode()
-        newRow.setAttribute('r', rowIndex)
+        const newRow = row.cloneNode() as Element
+        newRow.setAttribute('r', rowIndex.toString())
         rowValues.forEach(value => newRow.append(value))
         newRows.push(newRow)
         continue
@@ -208,31 +199,32 @@ const replace = async (template, data) => {
           }
           return createCell(Object.assign({}, el, { row: rowIndex, column: index }))
         })
-        const newRow = row.cloneNode()
-        newRow.setAttribute('r', rowIndex)
+        const newRow = row.cloneNode() as Element
+        newRow.setAttribute('r', rowIndex.toString())
         rowValues.forEach(value => newRow.append(value))
         newRows.push(newRow)
       }
     }
 
     // Generate new sheet data
-    const newSheetData = xml.querySelector('sheetData').cloneNode()
+    const SheetData = xml.querySelector('sheetData')
+    if (!SheetData) throw new Error(`xlsx-template-browser - replaceInTemplate - Unable the find the selector: sheetData`)
+    const newSheetData = SheetData.cloneNode() as Element
     newRows.forEach(row => newSheetData.append(row))
-    xml.querySelector('sheetData').replaceWith(newSheetData)
+    SheetData.replaceWith(newSheetData)
     const newData = serializer.serializeToString(xml).replace(/ ?xmlns="http:\/\/www\.w3\.org\/1999\/xhtml"/g, '')
     // Save the data of the worksheet
-    await new_zip.file(worksheet, newData)
+    new_zip.file(worksheet, newData)
   }
 
   /* FINALIZE NEW SHARED STRINGS */
   newSharedStrings = [...newSharedStrings, ...newStrings.map(el => createSharedString(el))]
-  const newSst = sst.cloneNode()
+  const newSst = sharedStringTable.cloneNode() as Element
   newSharedStrings.forEach(si => newSst.append(si))
-  sst.replaceWith(newSst)
+  sharedStringTable.replaceWith(newSst)
   const newData = serializer.serializeToString(xml).replace(/ ?xmlns="http:\/\/www\.w3\.org\/1999\/xhtml"/g, '')
   // Save new shared strings
   new_zip.file('xl/sharedStrings.xml', newData)
   return new_zip.generateAsync({ type: 'blob' })
 }
-
-export default replace
+export default replaceInTemplate
