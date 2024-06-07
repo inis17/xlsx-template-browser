@@ -12,9 +12,8 @@ function dateToExcel(value: Date): number {
 
 /**
  * Guesses the Excel data type for the given JavaScript primitive value.
-                        or undefined if the data type is not recognized.
  */
-export function guessDataType(value: Object) {
+export function guessDataType(value: Object): { cellType: string, value: string | number } {
   if (typeof value === 'undefined') return { cellType: 's', value: '' }
   if (typeof value === 'number') {
     if (isFinite(value)) return { cellType: 'n', value }
@@ -30,9 +29,6 @@ export function guessDataType(value: Object) {
 
 /**
  * Creates a new shared string for an Excel file.
- * @param {string} text - The text content of the shared string.
- * @param {Element} template - (Optional) An existing node with cell to clone for the shared string.
- * @returns {Element} - The newly created or cloned shared string element.
  */
 export function createSharedString(text: string, template?: Element): Element {
   const si = template ? template.cloneNode() as Element : document.createElement('si')
@@ -42,40 +38,40 @@ export function createSharedString(text: string, template?: Element): Element {
   return si
 }
 
+type Cell = {
+  value: Element | null | undefined
+  row: number
+  column: number
+  template: Element
+  cellType: string | null
+}
 /**
  * Creates a cell with the specified value.
- * @param {Object} options - An object containing parameters for cell creation.
- * @param {*} options.value - The value to be set in the cell.
- * @param {string|number} options.row - The row reference for the cell.
- * @param {string|number} options.column - The column reference (either string or numeric) for the cell.
- * @param {Element} options.template - (Optional) An existing template to clone for the cell.
- * @param {string} options.cellType - The type of the cell (e.g., 's', 'n', 'b', 'f') for Excel formatting.
- * @returns {Element} - The created cell element.
  */
-export const createCell = ({ value, row, column, template, cellType }) => {
+export function createCell(c: Cell): Element {
   // If the cell is not a string, then skip
-  if (!cellType && !value) {
-    return template
+  if (!c.cellType && !c.value) {
+    return c.template
   }
   // If the cell is formula, then skip
-  if (cellType === 'f') {
+  if (c.cellType === 'f') {
     // Check precalculated value
-    const v = value.querySelector('v')
+    const v = c.value.querySelector('v')
     if (v) v.remove()
-    return value
+    return c.value
   }
   // Clone initial node with the style or create a new one
-  const cell = template ? template.cloneNode() : document.createElement('c')
+  const cell = c.template ? c.template.cloneNode() as Element : document.createElement('c')
   // Create a cell reference
-  if (row && column) {
-    column = typeof column === 'number' ? getExcelColumnName(column) : column
-    cell.setAttribute('r', column + row)
+  if (c.row && c.column) {
+    const column = typeof c.column === 'number' ? getExcelColumnName(c.column) : c.column
+    cell.setAttribute('r', column + c.row)
   }
   // If no value is provided, return cell
-  if (typeof value === 'undefined') return cell
+  if (typeof c.value === 'undefined') return cell
   const valueTag = document.createElement('v')
-  cell.setAttribute('t', cellType)
-  valueTag.textContent = value
+  cell.setAttribute('t', c.cellType)
+  valueTag.textContent = c.value.textContent
   cell.appendChild(valueTag)
   return cell
 }
@@ -83,7 +79,7 @@ export const createCell = ({ value, row, column, template, cellType }) => {
 /**
  * Converts a numeric index to an Excel column name.
  */
-const getExcelColumnName = (index: number) => {
+function getExcelColumnName(index: number): string {
   let result = ''
   while (index > 0) {
     const remainder = (index - 1) % 26
@@ -95,10 +91,8 @@ const getExcelColumnName = (index: number) => {
 
 /**
  * Converts an Excel column name to its numeric index.
- * @param {string} columnName - The Excel column name to be converted.
- * @returns {number} - The numeric index corresponding to the Excel column name.
  */
-export const getExcelColumnIndex = (columnName) => {
+export function getExcelColumnIndex(columnName: string): number {
   columnName = columnName.replace(/\d+/g, '')
   let index = 0
   for (let i = 0; i < columnName.length; i++) {
@@ -108,24 +102,17 @@ export const getExcelColumnIndex = (columnName) => {
   return index
 }
 
-/**
- * Escapes unsafe XML characters in a given string to ensure its safe inclusion
- * in XML documents, preventing parsing issues.
- *
- * @param {string} unsafe - The input string containing XML-unsafe characters.
- * @returns {string} - A new string with XML-unsafe characters replaced by their
- * corresponding HTML entities.
- */
-
-const unsafeChars = {
-  '<': '&lt;',
-  '>': '&gt;',
-  '&': '&amp;',
-  '\'': '&apos;',
-  '"': '&quot;'
-}
-
-export const escapeXml = (unsafe: string) => {
-  return unsafe.replace(/[<>&'"]/g, (c) => { return unsafeChars[c] })
-}
-
+// /**
+//  * Escapes unsafe XML characters in a given string to ensure its safe inclusion
+//  * in XML documents, preventing parsing issues.
+//  */
+// export function escapeXml(unsafe: string): string {
+//   const unsafeChars = {
+//     '<': '&lt;',
+//     '>': '&gt;',
+//     '&': '&amp;',
+//     '\'': '&apos;',
+//     '"': '&quot;'
+//   }
+//   return unsafe.replace(/[<>&'"]/g, (c) => { return unsafeChars[c] })
+// }
